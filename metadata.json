@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Monitor de Câmeras IP",
+  "description": "Uma aplicação web para monitorar câmeras IP em sua rede local. Adicione, visualize e gerencie os streams de suas câmeras de segurança em uma interface de painel limpa e moderna.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
