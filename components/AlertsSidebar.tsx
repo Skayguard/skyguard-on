@@ -56,9 +56,14 @@ const AlertsSidebar: React.FC<AlertsSidebarProps> = ({ isOpen, onClose, events, 
                     <ul>
                         {events.map(event => (
                             <li key={event.id} className="border-b border-gray-700/50 p-4 hover:bg-gray-700/50">
-                                <p className="font-semibold text-white">Movimento detectado</p>
+                                <p className="font-semibold text-white">Movimento significativo detectado</p>
                                 <p className="text-sm text-gray-300">Câmera: <span className="font-medium text-cyan-400">{event.cameraName}</span></p>
-                                <p className="text-xs text-gray-400 mt-1">{timeAgo(event.timestamp)}</p>
+                                {event.analysis && (
+                                    <p className="text-sm text-gray-400 mt-1 bg-gray-900/50 p-2 rounded-md">
+                                        <span className="font-semibold text-gray-300">Análise da IA:</span> {event.analysis}
+                                    </p>
+                                )}
+                                <p className="text-xs text-gray-400 mt-2">{timeAgo(event.timestamp)}</p>
                             </li>
                         ))}
                     </ul>
@@ -66,7 +71,7 @@ const AlertsSidebar: React.FC<AlertsSidebarProps> = ({ isOpen, onClose, events, 
                     <div className="text-center p-10 flex flex-col items-center justify-center h-full">
                         <BellIcon className="w-16 h-16 text-gray-600 mb-4" />
                         <h3 className="text-lg font-semibold text-gray-400">Nenhum evento registrado</h3>
-                        <p className="text-sm text-gray-500">Eventos de movimento aparecerão aqui.</p>
+                        <p className="text-sm text-gray-500">Eventos de movimento filtrados pela IA aparecerão aqui.</p>
                     </div>
                 )}
             </div>

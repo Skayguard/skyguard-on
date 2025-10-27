@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, DetectionZone } from '../types';
+import { Camera, DetectionZone, DetectionScenario } from '../types';
 import { SpinnerIcon } from './icons/Icons';
 
 interface CameraModalProps {
@@ -7,6 +7,14 @@ interface CameraModalProps {
   onClose: () => void;
   onSave: (camera: Camera) => void;
 }
+
+const scenarioOptions: { value: DetectionScenario, label: string }[] = [
+    { value: 'general', label: 'Geral (Pessoas, Veículos)' },
+    { value: 'ufo', label: 'UFOs / UAPs' },
+    { value: 'birds', label: 'Pássaros' },
+    { value: 'planes', label: 'Aviões' },
+    { value: 'meteors', label: 'Meteoros' },
+];
 
 const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave }) => {
   const [camera, setCamera] = useState<Camera>({
@@ -18,6 +26,7 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
     motionDetectionEnabled: cameraToEdit?.motionDetectionEnabled || false,
     motionDetectionSensitivity: cameraToEdit?.motionDetectionSensitivity || 50,
     motionDetectionZones: cameraToEdit?.motionDetectionZones || [],
+    detectionScenario: cameraToEdit?.detectionScenario || 'general',
   });
 
   const [isDrawing, setIsDrawing] = useState(false);
@@ -32,6 +41,11 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [permissionError, setPermissionError] = useState<string|null>(null);
   const previewStreamRef = useRef<MediaStream | null>(null);
+
+  // State for network scanner
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [foundDevices, setFoundDevices] = useState<{name: string, url: string}[] | null>(null);
 
   useEffect(() => {
     // Cleanup stream on component unmount
@@ -212,15 +226,24 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
     });
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
     if (name === 'streamUrl') {
         setUrlError(null);
     }
-    setCamera(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }));
+    
+    // FIX: Add type guard to safely access 'checked' property on checkbox inputs.
+    if (type === 'checkbox' && e.target instanceof HTMLInputElement) {
+        setCamera(prev => ({
+          ...prev,
+          [name]: e.target.checked,
+        }));
+    } else {
+        setCamera(prev => ({
+          ...prev,
+          [name]: value,
+        }));
+    }
   };
   
   const handleRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -246,6 +269,36 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
         }
         onSave(camera);
     }
+  };
+
+  const handleScanNetwork = () => {
+    setIsScanning(true);
+    setFoundDevices(null);
+    setScanProgress(0);
+
+    const interval = setInterval(() => {
+        setScanProgress(prev => {
+            const next = prev + Math.random() * 15;
+            if (next >= 100) {
+                clearInterval(interval);
+                setTimeout(() => {
+                    setFoundDevices([
+                        { name: 'Câmera do Portão', url: 'https://via.placeholder.com/600x400/333/FFF?text=Portão' },
+                        { name: 'Câmera da Cozinha', url: 'https://via.placeholder.com/600x400/444/FFF?text=Cozinha' },
+                        { name: 'Babá Eletrônica', url: 'https://via.placeholder.com/600x400/555/FFF?text=Quarto' },
+                    ]);
+                    setIsScanning(false);
+                }, 500);
+                return 100;
+            }
+            return next;
+        });
+    }, 250);
+  };
+
+  const handleSelectDevice = (device: {name: string, url: string}) => {
+      setCamera(prev => ({...prev, name: device.name, streamUrl: device.url}));
+      setFoundDevices(null);
   };
 
   useEffect(() => {
@@ -296,14 +349,40 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
           {camera.type === 'ip' ? (
             <div className="mb-6">
               <label htmlFor="streamUrl" className="block text-sm font-medium text-gray-300 mb-1">URL da Stream</label>
-              <div className="relative">
-                  <input
-                    type="text" id="streamUrl" name="streamUrl" value={camera.streamUrl} onChange={handleInputChange} onBlur={(e) => verifyUrl(e.target.value)}
-                    className={`w-full bg-gray-700 border rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 ${urlError ? 'border-red-500' : 'border-gray-600'}`}
-                    required />
-                  {isVerifyingUrl && <SpinnerIcon className="animate-spin w-5 h-5 text-cyan-400 absolute top-1/2 right-3 -translate-y-1/2"/>}
+              <div className="flex items-end gap-2">
+                <div className="relative flex-grow">
+                    <input
+                      type="text" id="streamUrl" name="streamUrl" value={camera.streamUrl} onChange={handleInputChange} onBlur={(e) => verifyUrl(e.target.value)}
+                      className={`w-full bg-gray-700 border rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 ${urlError ? 'border-red-500' : 'border-gray-600'}`}
+                      required />
+                    {isVerifyingUrl && <SpinnerIcon className="animate-spin w-5 h-5 text-cyan-400 absolute top-1/2 right-3 -translate-y-1/2"/>}
+                </div>
+                <button type="button" onClick={handleScanNetwork} disabled={isScanning} className="px-3 py-2 bg-gray-600 hover:bg-gray-500 rounded-md text-sm font-semibold whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
+                  {isScanning ? 'Procurando...' : 'Procurar na Rede'}
+                </button>
               </div>
               {urlError && <p className="text-red-500 text-sm mt-2">{urlError}</p>}
+              
+              {isScanning && (
+                <div className="mt-3">
+                    <div className="w-full bg-gray-700 rounded-full h-2.5">
+                        <div className="bg-cyan-600 h-2.5 rounded-full" style={{width: `${scanProgress}%`}}></div>
+                    </div>
+                </div>
+              )}
+              {foundDevices && (
+                  <div className="mt-4">
+                      <h4 className="text-sm font-medium text-gray-300 mb-2">Dispositivos Encontrados:</h4>
+                      <ul className="bg-gray-700 rounded-md border border-gray-600 max-h-32 overflow-y-auto">
+                          {foundDevices.length > 0 ? foundDevices.map(device => (
+                              <li key={device.url} onClick={() => handleSelectDevice(device)} className="p-2 hover:bg-cyan-600 cursor-pointer border-b border-gray-600 last:border-b-0">
+                                  <p className="font-semibold text-white">{device.name}</p>
+                                  <p className="text-xs text-gray-400 truncate">{device.url}</p>
+                              </li>
+                          )) : <li className="p-2 text-sm text-gray-400">Nenhum dispositivo encontrado.</li>}
+                      </ul>
+                  </div>
+              )}
             </div>
           ) : (
             <div className="mb-6">
@@ -327,6 +406,14 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
             
             {camera.motionDetectionEnabled && (
                 <div className="mt-4 pl-8 space-y-6">
+                    <div>
+                        <label htmlFor="detectionScenario" className="block text-sm font-medium text-gray-300 mb-2">Cenário de Detecção</label>
+                        <select id="detectionScenario" name="detectionScenario" value={camera.detectionScenario} onChange={handleInputChange}
+                                className="w-full bg-gray-700 border border-gray-600 rounded-md px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            {scenarioOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                        </select>
+                    </div>
+
                     <div>
                         <label htmlFor="motionDetectionSensitivity" className="block text-sm font-medium text-gray-300 mb-2">Sensibilidade ({camera.motionDetectionSensitivity})</label>
                         <input type="range" id="motionDetectionSensitivity" name="motionDetectionSensitivity" min="0" max="100" value={camera.motionDetectionSensitivity} onChange={handleRangeChange} className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
@@ -353,7 +440,7 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
             <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-500 font-semibold focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-gray-500">
               Cancelar
             </button>
-            <button type="submit" disabled={isVerifyingUrl} className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 font-semibold focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500 disabled:bg-cyan-800 disabled:cursor-not-allowed">
+            <button type="submit" disabled={isVerifyingUrl || isScanning} className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700 font-semibold focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-800 focus:ring-cyan-500 disabled:bg-cyan-800 disabled:cursor-not-allowed">
               {isVerifyingUrl ? 'Verificando...' : 'Salvar'}
             </button>
           </div>

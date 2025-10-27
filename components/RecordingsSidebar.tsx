@@ -187,12 +187,18 @@ const RecordingsSidebar: React.FC<RecordingsSidebarProps> = ({ isOpen, onClose, 
                                         </button>
                                     </div>
                                 </div>
-                                <div className="mt-2 text-sm text-gray-300 bg-gray-900/50 p-2 rounded-md">
+                                <div className="mt-2 text-sm text-gray-300 bg-gray-900/50 p-2 rounded-md min-h-[4rem]">
                                     {loadingAnalysis[rec.id] && <p className="text-gray-400 italic">Analisando vídeo...</p>}
                                     {errorAnalysis[rec.id] && <p className="text-red-400">{errorAnalysis[rec.id]}</p>}
+                                    
                                     {analysisResults[rec.id] && <p className="whitespace-pre-wrap">{analysisResults[rec.id]}</p>}
-                                    {!analysisResults[rec.id] && !loadingAnalysis[rec.id] && !errorAnalysis[rec.id] &&
-                                        <p className="text-gray-500 italic text-xs">Clique em ✨ para gerar um resumo do vídeo.</p>
+                                    
+                                    {!analysisResults[rec.id] && rec.analysis && !loadingAnalysis[rec.id] && !errorAnalysis[rec.id] &&
+                                        <p className="whitespace-pre-wrap">{rec.analysis}</p>
+                                    }
+
+                                    {!analysisResults[rec.id] && !rec.analysis && !loadingAnalysis[rec.id] && !errorAnalysis[rec.id] &&
+                                        <p className="text-gray-500 italic text-xs">A análise automática de IA aparecerá aqui para gravações de movimento. Clique em ✨ para analisar manualmente.</p>
                                     }
                                 </div>
                             </li>

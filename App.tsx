@@ -5,8 +5,90 @@ import AlertsSidebar from './components/AlertsSidebar';
 import RecordingsSidebar from './components/RecordingsSidebar';
 import Toolbar from './components/Toolbar';
 import PositioningTool from './components/PositioningTool';
-import { Camera, MotionEvent, Recording } from './types';
+import { Camera, MotionEvent, Recording, MotionAnalysisResponseSchema, DetectionScenario } from './types';
 import { addRecordingToDB, getRecordingsFromDB, deleteRecordingFromDB } from './db';
+import { GoogleGenAI } from "@google/genai";
+
+// --- Funções Auxiliares de Análise de Vídeo ---
+
+const extractFrame = (videoUrl: string, time: number): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    video.onseeked = () => {
+      if (!ctx) return reject(new Error("Não foi possível obter o contexto do canvas"));
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      video.src = "";
+      resolve(canvas.toDataURL('image/jpeg'));
+    };
+    
+    video.onloadeddata = () => { video.currentTime = time; };
+    video.onerror = () => reject(new Error("Falha ao carregar o vídeo para extração de quadro."));
+    video.src = videoUrl;
+  });
+};
+
+const getVideoDuration = (videoUrl: string): Promise<number> => {
+    return new Promise((resolve, reject) => {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.onloadedmetadata = () => resolve(video.duration);
+        video.onerror = () => reject(new Error("Não foi possível carregar os metadados do vídeo."));
+        video.src = videoUrl;
+    });
+};
+
+const analyzeVideoWithAI = async (videoUrl: string): Promise<string> => {
+  if (!process.env.API_KEY) throw new Error("A chave de API não está configurada.");
+  
+  const duration = await getVideoDuration(videoUrl);
+  let frameTimes = [duration * 0.1, duration * 0.5, duration * 0.9];
+  if (duration < 2) frameTimes = [duration * 0.5];
+
+  const framePromises = frameTimes.map(time => extractFrame(videoUrl, time));
+  const frameDataUrls = await Promise.all(framePromises);
+
+  const imageParts = frameDataUrls.map(dataUrl => ({
+      inlineData: { mimeType: 'image/jpeg', data: dataUrl.split(',')[1] },
+  }));
+
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const textPart = { text: 'Com base nestes quadros de uma gravação de câmera de segurança, descreva os principais eventos ou objetos de interesse no vídeo. Forneça um resumo conciso.' };
+
+  const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: { parts: [textPart, ...imageParts] },
+  });
+  
+  return response.text;
+};
+
+
+const getPromptForScenario = (scenario: DetectionScenario): string => {
+    switch (scenario) {
+        case 'ufo':
+            return `Aja como um analista de anomalias aéreas (UFO/UAP). Analise esta imagem de uma câmera de segurança apontada para o céu. Ignore eventos comuns como aviões, pássaros, nuvens ou mudanças de luz. Foque em objetos com formas não convencionais, movimentos erráticos, aceleração instantânea ou que não possuam meios de propulsão visíveis. Determine se o evento é uma 'Anomalia Aérea Potencial' ou um 'Evento Comum'. Responda apenas com JSON.`;
+        case 'birds':
+            return `Aja como um ornitólogo usando uma câmera de monitoramento. Analise esta imagem. Identifique se o movimento é causado por um pássaro. Ignore outros movimentos como insetos, folhas ao vento ou mudanças de luz. Determine se o evento é 'Pássaro Detectado' ou 'Não é um Pássaro'. Responda apenas com JSON.`;
+        case 'planes':
+            return `Aja como um controlador de tráfego aéreo. Analise esta imagem de uma câmera de vigilância do céu. Identifique se o movimento é causado por uma aeronave convencional (avião, helicóptero, drone). Ignore pássaros, nuvens e outros fenômenos. Determine se o evento é 'Aeronave Detectada' ou 'Não é uma Aeronave'. Responda apenas com JSON.`;
+        case 'meteors':
+            return `Aja como um astrônomo monitorando o céu noturno. Analise esta imagem. Procure por rastros de luz rápidos e fugazes característicos de meteoros ou 'estrelas cadentes'. Ignore aviões (luzes piscantes e constantes), satélites (pontos de luz lentos e contínuos) e outros ruídos. Determine se o evento é um 'Meteoro Potencial' ou 'Não é um Meteoro'. Responda apenas com JSON.`;
+        case 'general':
+        default:
+            return `Aja como um sistema avançado de detecção de movimento. Analise esta imagem de uma câmera de segurança. Determine se o movimento é significativo (ex: pessoa, veículo, animal grande) ou insignificante (ex: mudança de luz, sombras, chuva, folhas, pequeno animal). Responda apenas com JSON.`;
+    }
+}
+
+
+// --- Componente App ---
 
 const App: React.FC = () => {
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -20,6 +102,7 @@ const App: React.FC = () => {
   const [unseenAlertsCount, setUnseenAlertsCount] = useState(0);
   const [lastEventCameraId, setLastEventCameraId] = useState<string | null>(null);
   const [activeAutoRecordings, setActiveAutoRecordings] = useState<Set<string>>(new Set());
+  const [analyzingCameraId, setAnalyzingCameraId] = useState<string | null>(null);
 
   useEffect(() => {
     // Carregar câmeras do localStorage
@@ -29,8 +112,8 @@ const App: React.FC = () => {
         setCameras(JSON.parse(savedCameras));
       } else {
         setCameras([
-            { id: '1', name: 'Sala de Estar', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Cam+1', motionDetectionEnabled: true, motionDetectionSensitivity: 50, motionDetectionZones: [] },
-            { id: '2', name: 'Garagem', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Cam+2', motionDetectionEnabled: false, motionDetectionSensitivity: 50, motionDetectionZones: [] },
+            { id: '1', name: 'Observatório do Céu', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Céu', motionDetectionEnabled: true, motionDetectionSensitivity: 70, motionDetectionZones: [], detectionScenario: 'ufo' },
+            { id: '2', name: 'Jardim dos Fundos', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Jardim', motionDetectionEnabled: true, motionDetectionSensitivity: 50, motionDetectionZones: [], detectionScenario: 'birds' },
         ]);
       }
     } catch (error) {
@@ -63,8 +146,6 @@ const App: React.FC = () => {
     
     // Limpar URLs de objeto ao desmontar
     return () => {
-        // O navegador libera automaticamente as URLs de objeto quando o documento é descarregado.
-        // A exclusão manual lida com a limpeza durante a vida útil do aplicativo.
         recordings.forEach(rec => URL.revokeObjectURL(rec.videoUrl));
     };
   }, []); // O array de dependências está intencionalmente vazio para executar apenas na montagem
@@ -108,36 +189,70 @@ const App: React.FC = () => {
     setCameraToEdit(null);
   };
   
-  const handleTriggerMotion = (camera: Camera) => {
-    const newEvent: MotionEvent = {
-        id: Date.now().toString(),
-        cameraId: camera.id,
-        cameraName: camera.name,
-        timestamp: new Date().toISOString(),
-    };
-    setMotionEvents(prevEvents => [newEvent, ...prevEvents]);
-    if (!isAlertsSidebarOpen) {
-        setUnseenAlertsCount(prev => prev + 1);
+  const handleTriggerMotion = async (camera: Camera, imageDataUrl: string) => {
+    if (!process.env.API_KEY) {
+      alert("A chave de API não está configurada para análise de movimento.");
+      return;
     }
-    setLastEventCameraId(camera.id);
-    setTimeout(() => setLastEventCameraId(null), 30000); // Brilho por 30s para corresponder à gravação
+    setAnalyzingCameraId(camera.id);
 
-    // Lógica de gravação automática
-    if (camera.motionDetectionEnabled && !activeAutoRecordings.has(camera.id)) {
-        setActiveAutoRecordings(prev => {
-            const newSet = new Set(prev);
-            newSet.add(camera.id);
-            return newSet;
-        });
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const imagePart = {
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: imageDataUrl.split(',')[1],
+        },
+      };
+      
+      const prompt = getPromptForScenario(camera.detectionScenario || 'general');
+      const textPart = { text: prompt };
 
-        // Parar a gravação após 30 segundos
-        setTimeout(() => {
-            setActiveAutoRecordings(prev => {
-                const newSet = new Set(prev);
-                newSet.delete(camera.id);
-                return newSet;
-            });
-        }, 30000);
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [textPart, imagePart] },
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: MotionAnalysisResponseSchema,
+        },
+      });
+
+      const analysisResult = JSON.parse(response.text);
+      
+      if (analysisResult.isSignificant) {
+          const newEvent: MotionEvent = {
+              id: Date.now().toString(),
+              cameraId: camera.id,
+              cameraName: camera.name,
+              timestamp: new Date().toISOString(),
+              analysis: analysisResult.reason,
+          };
+          setMotionEvents(prevEvents => [newEvent, ...prevEvents]);
+          if (!isAlertsSidebarOpen) {
+              setUnseenAlertsCount(prev => prev + 1);
+          }
+          setLastEventCameraId(camera.id);
+          setTimeout(() => setLastEventCameraId(null), 30000); // Brilho por 30s
+
+          // Lógica de gravação automática
+          if (camera.motionDetectionEnabled && !activeAutoRecordings.has(camera.id)) {
+              setActiveAutoRecordings(prev => new Set(prev).add(camera.id));
+              setTimeout(() => {
+                  setActiveAutoRecordings(prev => {
+                      const newSet = new Set(prev);
+                      newSet.delete(camera.id);
+                      return newSet;
+                  });
+              }, 30000);
+          }
+      } else {
+        alert(`Movimento insignificante ignorado na ${camera.name}: ${analysisResult.reason}`);
+      }
+    } catch (error) {
+      console.error("Erro na análise de movimento com IA:", error);
+      alert("Não foi possível analisar o evento de movimento.");
+    } finally {
+      setAnalyzingCameraId(null);
     }
   };
 
@@ -165,22 +280,37 @@ const App: React.FC = () => {
     }
   };
   
-  const handleRecordingComplete = async (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => {
-      const newRecordingData = {
-          ...recordingData,
-          id: Date.now().toString(),
-      };
-      try {
-          await addRecordingToDB(newRecordingData, videoBlob);
-          const newRecording: Recording = {
-              ...newRecordingData,
-              videoUrl: URL.createObjectURL(videoBlob),
-          };
-          setRecordings(prev => [newRecording, ...prev]);
-      } catch (error) {
-          console.error("Falha ao salvar a gravação:", error);
-          alert("Não foi possível salvar a gravação.");
-      }
+  const handleRecordingComplete = async (recordingData: Omit<Recording, 'id' | 'videoUrl' | 'analysis'>, videoBlob: Blob, isAuto: boolean) => {
+    const tempVideoUrl = URL.createObjectURL(videoBlob);
+    let analysisResult: string | undefined = undefined;
+
+    if (isAuto) {
+        try {
+            analysisResult = await analyzeVideoWithAI(tempVideoUrl);
+        } catch (error) {
+            console.error("Falha na análise automática de vídeo:", error);
+            // Continua salvando a gravação mesmo se a análise falhar
+        }
+    }
+
+    const newRecordingData = {
+        ...recordingData,
+        id: Date.now().toString(),
+        analysis: analysisResult,
+    };
+
+    try {
+        await addRecordingToDB(newRecordingData, videoBlob);
+        const newRecording: Recording = {
+            ...newRecordingData,
+            videoUrl: tempVideoUrl,
+        };
+        setRecordings(prev => [newRecording, ...prev]);
+    } catch (error) {
+        console.error("Falha ao salvar a gravação:", error);
+        alert("Não foi possível salvar a gravação.");
+        URL.revokeObjectURL(tempVideoUrl); // Limpar se o salvamento falhar
+    }
   };
 
   const handleDeleteRecording = async (id: string) => {
@@ -229,6 +359,7 @@ const App: React.FC = () => {
                   lastEventCameraId={lastEventCameraId}
                   onRecordingComplete={handleRecordingComplete}
                   activeAutoRecordings={activeAutoRecordings}
+                  analyzingCameraId={analyzingCameraId}
               />
           ) : (
               <div className="text-center py-20">

@@ -1,17 +1,40 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Recording } from '../types';
-import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon, CameraIcon, SparklesIcon } from './icons/Icons';
+import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon, CameraIcon, SparklesIcon, SpinnerIcon, AdjustmentsIcon, UfoIcon, BirdIcon, PlaneIcon, MeteorIcon, EyeIcon } from './icons/Icons';
 import GeminiAnalysis from './GeminiAnalysis';
 
 interface CameraViewProps {
   camera: Camera;
   onEdit: (camera: Camera) => void;
   onDelete: (id: string) => void;
-  onTriggerMotion: (camera: Camera) => void;
+  onTriggerMotion: (camera: Camera, imageDataUrl: string) => void;
   isGlowing: boolean;
-  onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => void;
+  onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl' | 'analysis'>, videoBlob: Blob, isAuto: boolean) => void;
   isAutoRecordingActive: boolean;
+  isAnalyzing: boolean;
 }
+
+const ScenarioIndicator: React.FC<{ scenario: Camera['detectionScenario'] }> = ({ scenario }) => {
+    const scenarioMap = {
+        general: { Icon: EyeIcon, label: 'Detecção Geral' },
+        ufo: { Icon: UfoIcon, label: 'Cenário: UFOs / UAPs' },
+        birds: { Icon: BirdIcon, label: 'Cenário: Pássaros' },
+        planes: { Icon: PlaneIcon, label: 'Cenário: Aviões' },
+        meteors: { Icon: MeteorIcon, label: 'Cenário: Meteoros' },
+    };
+    const current = scenarioMap[scenario || 'general'];
+
+    return (
+        <div className="absolute bottom-4 left-4 z-10 group">
+            <div className="p-2 bg-gray-900/60 rounded-full text-white">
+                <current.Icon className="w-5 h-5" />
+            </div>
+            <div className="absolute bottom-0 left-full ml-2 mb-1 px-2 py-1 bg-gray-700 text-white text-xs rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                {current.label}
+            </div>
+        </div>
+    );
+};
 
 const CameraView: React.FC<CameraViewProps> = ({
   camera,
@@ -21,6 +44,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   isGlowing,
   onRecordingComplete,
   isAutoRecordingActive,
+  isAnalyzing,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,6 +65,10 @@ const CameraView: React.FC<CameraViewProps> = ({
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   const [imageForAnalysis, setImageForAnalysis] = useState<string | null>(null);
 
+  // State for image adjustments
+  const [adjustments, setAdjustments] = useState({ brightness: 100, contrast: 100, saturation: 100 });
+  const [showAdjustments, setShowAdjustments] = useState(false);
+
   const startRecording = (isManual: boolean) => {
     if (!canvasRef.current || isRecording) return;
     
@@ -56,7 +84,8 @@ const CameraView: React.FC<CameraViewProps> = ({
 
     mediaRecorderRef.current.onstop = () => {
       const videoBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-      
+      const isAuto = !isManual;
+
       if (isManual) {
         // For manual recordings, trigger a download prompt
         const url = URL.createObjectURL(videoBlob);
@@ -68,16 +97,15 @@ const CameraView: React.FC<CameraViewProps> = ({
         a.click();
         window.URL.revokeObjectURL(url);
         document.body.removeChild(a);
-      } else {
-        // For automatic (motion) recordings, save to the sidebar
-        const recordingData: Omit<Recording, 'id' | 'videoUrl'> = {
-          cameraId: camera.id,
-          cameraName: camera.name,
-          timestamp: new Date().toISOString(),
-          fileName: `recording_${camera.name.replace(/\s+/g, '_')}_${new Date().toISOString()}.webm`
-        };
-        onRecordingComplete(recordingData, videoBlob);
       }
+      
+      const recordingData: Omit<Recording, 'id' | 'videoUrl' | 'analysis'> = {
+        cameraId: camera.id,
+        cameraName: camera.name,
+        timestamp: new Date().toISOString(),
+        fileName: `recording_${camera.name.replace(/\s+/g, '_')}_${new Date().toISOString()}.webm`
+      };
+      onRecordingComplete(recordingData, videoBlob, isAuto);
       
       recordedChunksRef.current = [];
     };
@@ -111,6 +139,12 @@ const CameraView: React.FC<CameraViewProps> = ({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     setImageForAnalysis(dataUrl);
     setIsAnalysisOpen(true);
+  };
+
+  const handleTriggerMotionClick = () => {
+    if (!canvasRef.current) return;
+    const imageDataUrl = canvasRef.current.toDataURL('image/jpeg', 0.8);
+    onTriggerMotion(camera, imageDataUrl);
   };
 
   const handleSnapshotAndParams = () => {
@@ -196,6 +230,12 @@ const CameraView: React.FC<CameraViewProps> = ({
     
     canvas.width = 600;
     canvas.height = 400;
+    
+    const applyFiltersAndDraw = (source: CanvasImageSource) => {
+      ctx.filter = `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%)`;
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      ctx.filter = 'none'; // Reset filter
+    };
 
     const cleanup = () => {
         if (stream) {
@@ -237,7 +277,7 @@ const CameraView: React.FC<CameraViewProps> = ({
 
                     const drawToCanvas = () => {
                         if (video.readyState >= 2) {
-                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            applyFiltersAndDraw(video);
                         }
                         animationFrameId.current = requestAnimationFrame(drawToCanvas);
                     };
@@ -252,7 +292,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         image.onload = () => {
             canvas.width = image.width;
             canvas.height = image.height;
-            ctx.drawImage(image, 0, 0);
+            applyFiltersAndDraw(image);
             setIsLoading(false);
         };
         image.onerror = drawError;
@@ -262,7 +302,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
 
     return cleanup;
-  }, [camera.streamUrl, camera.deviceId, camera.type]);
+  }, [camera.streamUrl, camera.deviceId, camera.type, adjustments]);
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -318,6 +358,11 @@ const CameraView: React.FC<CameraViewProps> = ({
 
   const resetTransform = () => {
     setTransform({ scale: 1, x: 0, y: 0 });
+  };
+  
+  const handleAdjustmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setAdjustments(prev => ({ ...prev, [name]: parseInt(value, 10) }));
   };
 
   return (
@@ -385,8 +430,34 @@ const CameraView: React.FC<CameraViewProps> = ({
           <TrashIcon className="w-5 h-5" />
         </button>
       </div>
+      
+      {showAdjustments && (
+        <div className="absolute bottom-16 right-4 bg-gray-900/80 backdrop-blur-sm rounded-lg p-3 z-20 w-52 space-y-2 shadow-lg">
+            <div className="text-xs text-gray-300">
+                <label htmlFor={`brilho-${camera.id}`} className="flex justify-between">Brilho <span>{adjustments.brightness}%</span></label>
+                <input id={`brilho-${camera.id}`} type="range" name="brightness" min="0" max="200" value={adjustments.brightness} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+            </div>
+            <div className="text-xs text-gray-300">
+                <label htmlFor={`contraste-${camera.id}`} className="flex justify-between">Contraste <span>{adjustments.contrast}%</span></label>
+                <input id={`contraste-${camera.id}`} type="range" name="contrast" min="0" max="200" value={adjustments.contrast} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+            </div>
+            <div className="text-xs text-gray-300">
+                <label htmlFor={`saturacao-${camera.id}`} className="flex justify-between">Saturação <span>{adjustments.saturation}%</span></label>
+                <input id={`saturacao-${camera.id}`} type="range" name="saturation" min="0" max="200" value={adjustments.saturation} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+            </div>
+        </div>
+      )}
+
+      <ScenarioIndicator scenario={camera.detectionScenario} />
 
       <div className="absolute bottom-4 right-4 flex gap-2 z-10">
+        <button
+            onClick={() => setShowAdjustments(prev => !prev)}
+            className={`p-2 rounded-full text-white transition-colors ${showAdjustments ? 'bg-cyan-600' : 'bg-gray-700/80 hover:bg-gray-600'}`}
+            title="Ajustes de Imagem"
+        >
+            <AdjustmentsIcon className="w-5 h-5" />
+        </button>
         <button
             onClick={handleAnalyzeFrame}
             className="p-2 bg-gray-700/80 hover:bg-purple-600 rounded-full text-white transition-colors"
@@ -410,12 +481,12 @@ const CameraView: React.FC<CameraViewProps> = ({
             {isRecording ? <StopIcon className="w-5 h-5"/> : <RecordIcon className="w-5 h-5" />}
         </button>
         <button
-          onClick={() => onTriggerMotion(camera)}
-          disabled={!camera.motionDetectionEnabled}
-          className="p-2 bg-gray-700/80 hover:bg-yellow-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Simular Detecção de Movimento"
+          onClick={handleTriggerMotionClick}
+          disabled={!camera.motionDetectionEnabled || isAnalyzing}
+          className="p-2 w-[36px] h-[36px] flex items-center justify-center bg-gray-700/80 hover:bg-yellow-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          title={isAnalyzing ? "Analisando movimento..." : "Simular Detecção de Movimento"}
         >
-          <MotionIcon className="w-5 h-5" />
+          {isAnalyzing ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <MotionIcon className="w-5 h-5" />}
         </button>
       </div>
 

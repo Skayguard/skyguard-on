@@ -6,10 +6,11 @@ interface CameraGridProps {
   cameras: Camera[];
   onEditCamera: (camera: Camera) => void;
   onDeleteCamera: (id: string) => void;
-  onTriggerMotion: (camera: Camera) => void;
+  onTriggerMotion: (camera: Camera, imageDataUrl: string) => void;
   lastEventCameraId: string | null;
-  onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => void;
+  onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl' | 'analysis'>, videoBlob: Blob, isAuto: boolean) => void;
   activeAutoRecordings: Set<string>;
+  analyzingCameraId: string | null;
 }
 
 const CameraGrid: React.FC<CameraGridProps> = ({ 
@@ -19,7 +20,8 @@ const CameraGrid: React.FC<CameraGridProps> = ({
   onTriggerMotion, 
   lastEventCameraId,
   onRecordingComplete,
-  activeAutoRecordings
+  activeAutoRecordings,
+  analyzingCameraId,
 }) => {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-4 md:p-6">
@@ -33,6 +35,7 @@ const CameraGrid: React.FC<CameraGridProps> = ({
           isGlowing={camera.id === lastEventCameraId}
           onRecordingComplete={onRecordingComplete}
           isAutoRecordingActive={activeAutoRecordings.has(camera.id)}
+          isAnalyzing={analyzingCameraId === camera.id}
         />
       ))}
     </div>
