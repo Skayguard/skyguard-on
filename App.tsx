@@ -4,7 +4,9 @@ import CameraModal from './components/CameraModal';
 import AlertsSidebar from './components/AlertsSidebar';
 import RecordingsSidebar from './components/RecordingsSidebar';
 import Toolbar from './components/Toolbar';
+import PositioningTool from './components/PositioningTool';
 import { Camera, MotionEvent, Recording } from './types';
+import { addRecordingToDB, getRecordingsFromDB, deleteRecordingFromDB } from './db';
 
 const App: React.FC = () => {
   const [cameras, setCameras] = useState<Camera[]>([]);
@@ -14,11 +16,13 @@ const App: React.FC = () => {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [isAlertsSidebarOpen, setIsAlertsSidebarOpen] = useState(false);
   const [isRecordingsSidebarOpen, setIsRecordingsSidebarOpen] = useState(false);
+  const [isPositioningToolOpen, setIsPositioningToolOpen] = useState(false);
   const [unseenAlertsCount, setUnseenAlertsCount] = useState(0);
   const [lastEventCameraId, setLastEventCameraId] = useState<string | null>(null);
+  const [activeAutoRecordings, setActiveAutoRecordings] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    // Load cameras from localStorage
+    // Carregar câmeras do localStorage
     try {
       const savedCameras = localStorage.getItem('cameras');
       if (savedCameras) {
@@ -34,7 +38,7 @@ const App: React.FC = () => {
         setCameras([]);
     }
 
-    // Load motion events from localStorage
+    // Carregar eventos de movimento do localStorage
     try {
       const savedEvents = localStorage.getItem('motionEvents');
       if (savedEvents) {
@@ -45,17 +49,25 @@ const App: React.FC = () => {
         setMotionEvents([]);
     }
 
-    // Load recordings from localStorage
-    try {
-        const savedRecordings = localStorage.getItem('recordings');
-        if (savedRecordings) {
-            setRecordings(JSON.parse(savedRecordings));
+    // Carregar gravações do IndexedDB
+    const loadRecordings = async () => {
+        try {
+            const dbRecordings = await getRecordingsFromDB();
+            setRecordings(dbRecordings);
+        } catch (error) {
+            console.error("Falha ao carregar gravações do IndexedDB", error);
+            setRecordings([]);
         }
-    } catch (error) {
-        console.error("Falha ao analisar gravações do localStorage", error);
-        setRecordings([]);
-    }
-  }, []);
+    };
+    loadRecordings();
+    
+    // Limpar URLs de objeto ao desmontar
+    return () => {
+        // O navegador libera automaticamente as URLs de objeto quando o documento é descarregado.
+        // A exclusão manual lida com a limpeza durante a vida útil do aplicativo.
+        recordings.forEach(rec => URL.revokeObjectURL(rec.videoUrl));
+    };
+  }, []); // O array de dependências está intencionalmente vazio para executar apenas na montagem
 
   useEffect(() => {
     localStorage.setItem('cameras', JSON.stringify(cameras));
@@ -64,10 +76,6 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('motionEvents', JSON.stringify(motionEvents));
   }, [motionEvents]);
-
-  useEffect(() => {
-    localStorage.setItem('recordings', JSON.stringify(recordings));
-  }, [recordings]);
 
   const handleAddCameraClick = () => {
     setCameraToEdit(null);
@@ -112,7 +120,25 @@ const App: React.FC = () => {
         setUnseenAlertsCount(prev => prev + 1);
     }
     setLastEventCameraId(camera.id);
-    setTimeout(() => setLastEventCameraId(null), 30000); // Glow for 30s to match recording
+    setTimeout(() => setLastEventCameraId(null), 30000); // Brilho por 30s para corresponder à gravação
+
+    // Lógica de gravação automática
+    if (camera.motionDetectionEnabled && !activeAutoRecordings.has(camera.id)) {
+        setActiveAutoRecordings(prev => {
+            const newSet = new Set(prev);
+            newSet.add(camera.id);
+            return newSet;
+        });
+
+        // Parar a gravação após 30 segundos
+        setTimeout(() => {
+            setActiveAutoRecordings(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(camera.id);
+                return newSet;
+            });
+        }, 30000);
+    }
   };
 
   const handleToggleAlertsSidebar = () => {
@@ -127,6 +153,10 @@ const App: React.FC = () => {
     setIsAlertsSidebarOpen(false);
     setIsRecordingsSidebarOpen(!isRecordingsSidebarOpen);
   };
+  
+  const handleTogglePositioningTool = () => {
+    setIsPositioningToolOpen(!isPositioningToolOpen);
+  };
 
   const handleClearAllAlerts = () => {
     if (window.confirm('Tem certeza que deseja limpar todos os alertas?')) {
@@ -135,23 +165,41 @@ const App: React.FC = () => {
     }
   };
   
-  const handleRecordingComplete = (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => {
-      const newRecording: Recording = {
+  const handleRecordingComplete = async (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => {
+      const newRecordingData = {
           ...recordingData,
           id: Date.now().toString(),
-          videoUrl: URL.createObjectURL(videoBlob),
       };
-      setRecordings(prev => [newRecording, ...prev]);
+      try {
+          await addRecordingToDB(newRecordingData, videoBlob);
+          const newRecording: Recording = {
+              ...newRecordingData,
+              videoUrl: URL.createObjectURL(videoBlob),
+          };
+          setRecordings(prev => [newRecording, ...prev]);
+      } catch (error) {
+          console.error("Falha ao salvar a gravação:", error);
+          alert("Não foi possível salvar a gravação.");
+      }
   };
 
-  const handleDeleteRecording = (id: string) => {
-      setRecordings(prev => {
-          const recToDelete = prev.find(r => r.id === id);
-          if (recToDelete) {
-              URL.revokeObjectURL(recToDelete.videoUrl);
-          }
-          return prev.filter(r => r.id !== id);
-      });
+  const handleDeleteRecording = async (id: string) => {
+      if (!window.confirm("Tem certeza que deseja excluir esta gravação permanentemente?")) {
+        return;
+      }
+      try {
+          await deleteRecordingFromDB(id);
+          setRecordings(prev => {
+              const recToDelete = prev.find(r => r.id === id);
+              if (recToDelete) {
+                  URL.revokeObjectURL(recToDelete.videoUrl);
+              }
+              return prev.filter(r => r.id !== id);
+          });
+      } catch (error) {
+          console.error("Falha ao excluir a gravação:", error);
+          alert("Não foi possível excluir a gravação.");
+      }
   };
 
   return (
@@ -160,6 +208,7 @@ const App: React.FC = () => {
         onAddCamera={handleAddCameraClick}
         onToggleAlerts={handleToggleAlertsSidebar}
         onToggleRecordings={handleToggleRecordingsSidebar}
+        onTogglePositioningTool={handleTogglePositioningTool}
         unseenAlertsCount={unseenAlertsCount}
       />
       <div className="flex-1 flex flex-col pl-16">
@@ -179,6 +228,7 @@ const App: React.FC = () => {
                   onTriggerMotion={handleTriggerMotion}
                   lastEventCameraId={lastEventCameraId}
                   onRecordingComplete={handleRecordingComplete}
+                  activeAutoRecordings={activeAutoRecordings}
               />
           ) : (
               <div className="text-center py-20">
@@ -194,6 +244,9 @@ const App: React.FC = () => {
           onClose={handleCloseModal}
           onSave={handleSaveCamera}
         />
+      )}
+       {isPositioningToolOpen && (
+        <PositioningTool onClose={handleTogglePositioningTool} />
       )}
       <AlertsSidebar 
         isOpen={isAlertsSidebarOpen} 

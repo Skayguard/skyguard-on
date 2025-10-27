@@ -1,10 +1,11 @@
 import React from 'react';
-import { PlusIcon, BellIcon, FilmIcon } from './icons/Icons';
+import { PlusIcon, BellIcon, FilmIcon, PositioningIcon } from './icons/Icons';
 
 interface ToolbarProps {
   onAddCamera: () => void;
   onToggleAlerts: () => void;
   onToggleRecordings: () => void;
+  onTogglePositioningTool: () => void;
   unseenAlertsCount: number;
 }
 
@@ -32,7 +33,7 @@ const ToolbarButton: React.FC<{
 );
 
 
-const Toolbar: React.FC<ToolbarProps> = ({ onAddCamera, onToggleAlerts, onToggleRecordings, unseenAlertsCount }) => {
+const Toolbar: React.FC<ToolbarProps> = ({ onAddCamera, onToggleAlerts, onToggleRecordings, onTogglePositioningTool, unseenAlertsCount }) => {
   return (
     <div className="fixed top-0 left-0 h-screen w-16 bg-gray-800/50 backdrop-blur-lg flex flex-col items-center py-4 space-y-4 z-40 border-r border-gray-700/50">
         <ToolbarButton onClick={onAddCamera} label="Adicionar Câmera">
@@ -43,6 +44,9 @@ const Toolbar: React.FC<ToolbarProps> = ({ onAddCamera, onToggleAlerts, onToggle
         </ToolbarButton>
         <ToolbarButton onClick={onToggleRecordings} label="Minhas Gravações">
             <FilmIcon className="w-6 h-6" />
+        </ToolbarButton>
+        <ToolbarButton onClick={onTogglePositioningTool} label="Calculadora de Posição">
+            <PositioningIcon className="w-6 h-6" />
         </ToolbarButton>
     </div>
   );

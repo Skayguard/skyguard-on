@@ -31,3 +31,21 @@ export interface Recording {
   videoUrl: string;
   fileName: string;
 }
+
+// Tipos para a Ferramenta de Posicionamento
+export interface TrackPoint {
+  id: number;
+  timestamp: number;
+  geo: {
+    lat: number;
+    lon: number;
+    alt: number;
+  };
+  distance: number;
+  bearing: number;
+}
+
+export interface Track {
+  id: string;
+  points: TrackPoint[];
+}

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Camera, Recording } from '../types';
-import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon } from './icons/Icons';
+import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon, CameraIcon, SparklesIcon } from './icons/Icons';
+import GeminiAnalysis from './GeminiAnalysis';
 
 interface CameraViewProps {
   camera: Camera;
@@ -9,6 +10,7 @@ interface CameraViewProps {
   onTriggerMotion: (camera: Camera) => void;
   isGlowing: boolean;
   onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl'>, videoBlob: Blob) => void;
+  isAutoRecordingActive: boolean;
 }
 
 const CameraView: React.FC<CameraViewProps> = ({
@@ -18,15 +20,16 @@ const CameraView: React.FC<CameraViewProps> = ({
   onTriggerMotion,
   isGlowing,
   onRecordingComplete,
+  isAutoRecordingActive,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null); // For USB cam stream
-  // FIX: Initialize useRef with null to provide an argument, which resolves the "Expected 1 arguments, but got 0" error.
   const animationFrameId = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const isAutoRecording = useRef(false);
   
   // State for zoom and pan
   const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
@@ -34,9 +37,14 @@ const CameraView: React.FC<CameraViewProps> = ({
   const startPanPoint = useRef({ x: 0, y: 0 });
   const viewRef = useRef<HTMLDivElement>(null);
 
+  // State for AI Analysis
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [imageForAnalysis, setImageForAnalysis] = useState<string | null>(null);
+
   const startRecording = (isManual: boolean) => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || isRecording) return;
     
+    isAutoRecording.current = !isManual;
     const stream = canvasRef.current.captureStream(25);
     mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'video/webm' });
 
@@ -82,17 +90,102 @@ const CameraView: React.FC<CameraViewProps> = ({
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      isAutoRecording.current = false;
     }
   };
 
   const handleToggleRecording = () => {
     if (isRecording) {
-      stopRecording();
+      if (!isAutoRecording.current) {
+          stopRecording();
+      }
     } else {
       startRecording(true); // true for manual recording
     }
   };
   
+  const handleAnalyzeFrame = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    setImageForAnalysis(dataUrl);
+    setIsAnalysisOpen(true);
+  };
+
+  const handleSnapshotAndParams = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // 1. Generate and download snapshot
+    canvas.toBlob((blob) => {
+        if (blob) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `SNAP-${camera.name.replace(/\s+/g, '_')}-${new Date().toISOString()}.jpg`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }
+    }, 'image/jpeg', 0.95);
+
+    // 2. Get Geolocation and generate parameters file
+    const getParams = (position: GeolocationPosition | null, error?: GeolocationPositionError) => {
+        let locationString = "Não foi possível obter a localização.";
+        if (error) {
+            locationString = `Erro de geolocalização: ${error.message}`;
+        }
+        if (position) {
+            locationString = `Latitude: ${position.coords.latitude}, Longitude: ${position.coords.longitude}, Precisão: ${position.coords.accuracy}m`;
+        }
+
+        const params = [
+            `Parâmetros de Captura de Snapshot`,
+            `---------------------------------`,
+            `Câmera: ${camera.name}`,
+            `Timestamp: ${new Date().toISOString()}`,
+            `Posição Geográfica (Estimada): ${locationString}`,
+            `Velocidade do Objeto: N/A (Cálculo não disponível)`,
+            `Detecção de Movimento: ${camera.motionDetectionEnabled ? `Ativa (Sensibilidade: ${camera.motionDetectionSensitivity})` : 'Inativa'}`,
+        ].join('\r\n');
+
+        const paramsBlob = new Blob([params], { type: 'text/plain' });
+        const url = URL.createObjectURL(paramsBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `PARAMS-${camera.name.replace(/\s+/g, '_')}-${new Date().toISOString()}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    };
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => getParams(position),
+            (error) => getParams(null, error)
+        );
+    } else {
+        getParams(null);
+    }
+  };
+  
+  useEffect(() => {
+    // If we get a signal to start auto-recording, and we're not already recording anything
+    if (isAutoRecordingActive && !isRecording) {
+      startRecording(false); // false for automatic
+    }
+    
+    // If the signal to auto-record stops, and we are in an auto-recording session
+    if (!isAutoRecordingActive && isRecording && isAutoRecording.current) {
+      stopRecording();
+    }
+  }, [isAutoRecordingActive]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -295,9 +388,24 @@ const CameraView: React.FC<CameraViewProps> = ({
 
       <div className="absolute bottom-4 right-4 flex gap-2 z-10">
         <button
+            onClick={handleAnalyzeFrame}
+            className="p-2 bg-gray-700/80 hover:bg-purple-600 rounded-full text-white transition-colors"
+            title="Analisar com IA"
+        >
+            <SparklesIcon className="w-5 h-5" />
+        </button>
+        <button
+            onClick={handleSnapshotAndParams}
+            className="p-2 bg-gray-700/80 hover:bg-blue-600 rounded-full text-white transition-colors"
+            title="Salvar Snapshot e Parâmetros"
+        >
+            <CameraIcon className="w-5 h-5" />
+        </button>
+        <button
             onClick={handleToggleRecording}
-            className={`p-2 rounded-full text-white transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-gray-700/80 hover:bg-gray-600'}`}
-            title={isRecording ? 'Parar Gravação' : 'Iniciar Gravação Manual'}
+            className={`p-2 rounded-full text-white transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-gray-700/80 hover:bg-gray-600'} ${isRecording && isAutoRecording.current ? 'opacity-50 cursor-not-allowed' : ''}`}
+            title={isRecording ? (isAutoRecording.current ? 'Gravação automática em andamento' : 'Parar Gravação') : 'Iniciar Gravação Manual'}
+            disabled={isRecording && isAutoRecording.current}
           >
             {isRecording ? <StopIcon className="w-5 h-5"/> : <RecordIcon className="w-5 h-5" />}
         </button>
@@ -310,6 +418,13 @@ const CameraView: React.FC<CameraViewProps> = ({
           <MotionIcon className="w-5 h-5" />
         </button>
       </div>
+
+      {isAnalysisOpen && imageForAnalysis && (
+        <GeminiAnalysis
+          imageDataUrl={imageForAnalysis}
+          onClose={() => setIsAnalysisOpen(false)}
+        />
+      )}
     </div>
   );
 };
