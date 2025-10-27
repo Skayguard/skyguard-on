@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Recording } from '../types';
-import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon, CameraIcon, SparklesIcon, SpinnerIcon, AdjustmentsIcon, UfoIcon, BirdIcon, PlaneIcon, MeteorIcon, EyeIcon } from './icons/Icons';
+import { Camera, Recording, DetectionZone } from '../types';
+import { EditIcon, TrashIcon, MotionIcon, RecordIcon, StopIcon, ArrowsPointingInIcon, CameraIcon, SparklesIcon, SpinnerIcon, AdjustmentsIcon, UfoIcon, BirdIcon, PlaneIcon, MeteorIcon, EyeIcon, CropIcon } from './icons/Icons';
 import GeminiAnalysis from './GeminiAnalysis';
 
 interface CameraViewProps {
@@ -72,6 +72,13 @@ const CameraView: React.FC<CameraViewProps> = ({
   // State for image adjustments
   const [adjustments, setAdjustments] = useState({ brightness: 100, contrast: 100, saturation: 100 });
   const [showAdjustments, setShowAdjustments] = useState(false);
+
+  // State for drawing selection rectangle
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [selectionRect, setSelectionRect] = useState<DetectionZone | null>(null);
+  const [currentDrawingRect, setCurrentDrawingRect] = useState<DetectionZone | null>(null);
+  const startDrawPoint = useRef<{x: number, y: number} | null>(null);
+
 
   const startRecording = (isManual: boolean) => {
     if (!canvasRef.current || isRecording) return;
@@ -243,6 +250,39 @@ const CameraView: React.FC<CameraViewProps> = ({
       ctx.filter = 'none'; // Reset filter
     };
 
+    const drawSelection = (rect: DetectionZone, isPixelCoords: boolean) => {
+        ctx.strokeStyle = '#FF0000';
+        ctx.lineWidth = 2;
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.2)';
+        
+        let x, y, width, height;
+        if (isPixelCoords) {
+            ({ x, y, width, height } = rect);
+        } else {
+            // Convert from relative to pixels
+            x = rect.x * canvas.width;
+            y = rect.y * canvas.height;
+            width = rect.width * canvas.width;
+            height = rect.height * canvas.height;
+        }
+
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeRect(x, y, width, height);
+    };
+
+    const drawLoop = (source: CanvasImageSource) => {
+        applyFiltersAndDraw(source);
+        
+        if (selectionRect) {
+            drawSelection(selectionRect, false);
+        }
+        if (currentDrawingRect) {
+            drawSelection(currentDrawingRect, true);
+        }
+
+        animationFrameId.current = requestAnimationFrame(() => drawLoop(source));
+    };
+
     const cleanup = () => {
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
@@ -252,6 +292,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         }
         if(animationFrameId.current) {
             cancelAnimationFrame(animationFrameId.current);
+            animationFrameId.current = null;
         }
     };
 
@@ -278,13 +319,8 @@ const CameraView: React.FC<CameraViewProps> = ({
                 video.play();
                 video.onloadedmetadata = () => {
                     setIsLoading(false);
-                    const drawToCanvas = () => {
-                        if (video.readyState >= 2) {
-                            applyFiltersAndDraw(video);
-                        }
-                        animationFrameId.current = requestAnimationFrame(drawToCanvas);
-                    };
-                    drawToCanvas();
+                    if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+                    drawLoop(video);
                 };
             }
         }).catch(drawError);
@@ -293,8 +329,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         const image = new Image();
         image.crossOrigin = "anonymous";
         image.onload = () => {
-            applyFiltersAndDraw(image);
             setIsLoading(false);
+            if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
+            drawLoop(image);
         };
         image.onerror = drawError;
         image.src = camera.streamUrl;
@@ -303,10 +340,10 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
 
     return cleanup;
-  }, [camera.streamUrl, camera.deviceId, camera.type, adjustments]);
+  }, [camera.streamUrl, camera.deviceId, camera.type, adjustments, selectionRect, currentDrawingRect]);
 
   const handleWheel = (e: React.WheelEvent) => {
-    if (isThumbnail) return;
+    if (isThumbnail || isDrawingMode) return;
     e.preventDefault();
     const view = viewRef.current;
     if (!view) return;
@@ -334,8 +371,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     });
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (isThumbnail) return;
+  const handlePanMouseDown = (e: React.MouseEvent) => {
     if (transform.scale > 1) {
         e.preventDefault();
         setIsPanning(true);
@@ -346,8 +382,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isThumbnail) return;
+  const handlePanMouseMove = (e: React.MouseEvent) => {
     if (isPanning) {
         e.preventDefault();
         const newX = e.clientX - startPanPoint.current.x;
@@ -356,9 +391,69 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
   };
 
-  const handleMouseUpOrLeave = () => {
-    if (isThumbnail) return;
+  const handlePanMouseUpOrLeave = () => {
     setIsPanning(false);
+  };
+  
+  const handleViewMouseDown = (e: React.MouseEvent) => {
+    if (isDrawingMode && transform.scale === 1 && !isThumbnail) {
+        e.preventDefault();
+        const canvas = canvasRef.current;
+        const view = viewRef.current;
+        if (!canvas || !view) return;
+
+        const rect = view.getBoundingClientRect();
+        const x = (e.clientX - rect.left) * (canvas.width / view.clientWidth);
+        const y = (e.clientY - rect.top) * (canvas.height / view.clientHeight);
+        
+        startDrawPoint.current = { x, y };
+        setSelectionRect(null);
+        return;
+    }
+    handlePanMouseDown(e);
+  };
+
+  const handleViewMouseMove = (e: React.MouseEvent) => {
+    if (isDrawingMode && startDrawPoint.current) {
+        e.preventDefault();
+        const canvas = canvasRef.current;
+        const view = viewRef.current;
+        if (!canvas || !view) return;
+
+        const rect = view.getBoundingClientRect();
+        const currentX = (e.clientX - rect.left) * (canvas.width / view.clientWidth);
+        const currentY = (e.clientY - rect.top) * (canvas.height / view.clientHeight);
+        const startX = startDrawPoint.current.x;
+        const startY = startDrawPoint.current.y;
+
+        setCurrentDrawingRect({
+            x: Math.min(startX, currentX),
+            y: Math.min(startY, currentY),
+            width: Math.abs(currentX - startX),
+            height: Math.abs(currentY - startY),
+        });
+        return;
+    }
+    handlePanMouseMove(e);
+  };
+  
+  const handleViewMouseUpOrLeave = () => {
+    if (isDrawingMode && startDrawPoint.current && currentDrawingRect) {
+        const canvas = canvasRef.current;
+        if (canvas && currentDrawingRect.width > 5 && currentDrawingRect.height > 5) {
+            setSelectionRect({
+                x: currentDrawingRect.x / canvas.width,
+                y: currentDrawingRect.y / canvas.height,
+                width: currentDrawingRect.width / canvas.width,
+                height: currentDrawingRect.height / canvas.height,
+            });
+        }
+        startDrawPoint.current = null;
+        setCurrentDrawingRect(null);
+        setIsDrawingMode(false);
+        return;
+    }
+    handlePanMouseUpOrLeave();
   };
 
   const resetTransform = () => {
@@ -368,6 +463,16 @@ const CameraView: React.FC<CameraViewProps> = ({
   const handleAdjustmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setAdjustments(prev => ({ ...prev, [name]: parseInt(value, 10) }));
+  };
+
+  const toggleDrawingMode = () => {
+    const newMode = !isDrawingMode;
+    setIsDrawingMode(newMode);
+    if (!newMode) {
+        setSelectionRect(null);
+        setCurrentDrawingRect(null);
+        startDrawPoint.current = null;
+    }
   };
 
   return (
@@ -381,10 +486,10 @@ const CameraView: React.FC<CameraViewProps> = ({
         ref={viewRef}
         className="relative bg-black overflow-hidden flex-grow"
         onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUpOrLeave}
-        onMouseLeave={handleMouseUpOrLeave}
+        onMouseDown={handleViewMouseDown}
+        onMouseMove={handleViewMouseMove}
+        onMouseUp={handleViewMouseUpOrLeave}
+        onMouseLeave={handleViewMouseUpOrLeave}
         onDoubleClick={resetTransform}
       >
         <canvas 
@@ -395,7 +500,7 @@ const CameraView: React.FC<CameraViewProps> = ({
                 height: '100%',
                 transformOrigin: '0 0',
                 transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                cursor: !isThumbnail && transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : (isThumbnail ? 'pointer' : 'default'),
+                cursor: isDrawingMode ? 'crosshair' : (!isThumbnail && transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : (isThumbnail ? 'pointer' : 'default')),
             }}
         />
         <video ref={videoRef} className="hidden" playsInline />
@@ -455,6 +560,9 @@ const CameraView: React.FC<CameraViewProps> = ({
             <ScenarioIndicator scenario={camera.detectionScenario} />
 
             <div className="absolute bottom-4 right-4 flex gap-2 z-10">
+                <button onClick={toggleDrawingMode} className={`p-2 rounded-full text-white transition-colors ${isDrawingMode ? 'bg-cyan-600' : 'bg-gray-700/80 hover:bg-gray-600'}`} title="Selecionar Objeto">
+                    <CropIcon className="w-5 h-5" />
+                </button>
                 <button onClick={() => setShowAdjustments(prev => !prev)} className={`p-2 rounded-full text-white transition-colors ${showAdjustments ? 'bg-cyan-600' : 'bg-gray-700/80 hover:bg-gray-600'}`} title="Ajustes de Imagem">
                     <AdjustmentsIcon className="w-5 h-5" />
                 </button>

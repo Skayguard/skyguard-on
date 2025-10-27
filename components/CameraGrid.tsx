@@ -36,10 +36,10 @@ const CameraGrid: React.FC<CameraGridProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full max-h-[calc(100vh-4rem)] p-4 md:p-6 gap-4">
+    <div className="flex flex-row h-full max-h-[calc(100vh-4rem)]">
       {/* Main Camera View */}
-      <div className="flex-grow flex items-center justify-center min-h-0">
-        <div className="w-full h-full max-w-6xl max-h-full">
+      <div className="flex-grow flex items-center justify-center min-h-0 p-4 md:p-6">
+        <div className="w-full h-full max-w-7xl max-h-full rounded-lg border-2 border-solid border-[#FF0000]">
             <CameraView
               key={selectedCamera.id}
               camera={selectedCamera}
@@ -54,13 +54,13 @@ const CameraGrid: React.FC<CameraGridProps> = ({
         </div>
       </div>
 
-      {/* Thumbnail Strip */}
+      {/* Thumbnail Sidebar */}
       {thumbnailCameras.length > 0 && (
-        <div className="flex-shrink-0">
-          <h3 className="text-lg font-semibold text-gray-400 mb-3 px-2">Outras Câmeras</h3>
-          <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4">
+        <div className="flex-shrink-0 w-1/4 max-w-xs bg-gray-900/30 p-4 flex flex-col border-l border-gray-700/50">
+          <h3 className="text-lg font-semibold text-gray-400 mb-4 flex-shrink-0">Outras Câmeras</h3>
+          <div className="flex-grow overflow-y-auto space-y-4 -mr-2 pr-2">
             {thumbnailCameras.map((camera) => (
-              <div key={camera.id} className="w-48 xl:w-56 flex-shrink-0" >
+              <div key={camera.id} className="w-full aspect-video">
                  <CameraView
                     camera={camera}
                     isThumbnail={true}
