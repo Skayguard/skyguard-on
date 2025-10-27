@@ -226,17 +226,19 @@ const CameraModal: React.FC<CameraModalProps> = ({ cameraToEdit, onClose, onSave
     });
   };
 
+  // Fix: Correctly handle checkbox input changes by using a type guard and extracting
+  // the 'checked' property before the state setter to avoid type-widening issues in the closure.
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
     if (name === 'streamUrl') {
         setUrlError(null);
     }
     
-    // FIX: Add type guard to safely access 'checked' property on checkbox inputs.
     if (type === 'checkbox' && e.target instanceof HTMLInputElement) {
+        const isChecked = e.target.checked;
         setCamera(prev => ({
           ...prev,
-          [name]: e.target.checked,
+          [name]: isChecked,
         }));
     } else {
         setCamera(prev => ({

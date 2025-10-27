@@ -12,6 +12,8 @@ interface CameraViewProps {
   onRecordingComplete: (recordingData: Omit<Recording, 'id' | 'videoUrl' | 'analysis'>, videoBlob: Blob, isAuto: boolean) => void;
   isAutoRecordingActive: boolean;
   isAnalyzing: boolean;
+  isThumbnail?: boolean;
+  onClick?: () => void;
 }
 
 const ScenarioIndicator: React.FC<{ scenario: Camera['detectionScenario'] }> = ({ scenario }) => {
@@ -45,6 +47,8 @@ const CameraView: React.FC<CameraViewProps> = ({
   onRecordingComplete,
   isAutoRecordingActive,
   isAnalyzing,
+  isThumbnail = false,
+  onClick
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -228,8 +232,10 @@ const CameraView: React.FC<CameraViewProps> = ({
 
     let stream: MediaStream | null = null;
     
-    canvas.width = 600;
-    canvas.height = 400;
+    const aspectRatio = 16 / 9;
+    canvas.width = 640;
+    canvas.height = canvas.width / aspectRatio;
+
     
     const applyFiltersAndDraw = (source: CanvasImageSource) => {
       ctx.filter = `brightness(${adjustments.brightness}%) contrast(${adjustments.contrast}%) saturate(${adjustments.saturation}%)`;
@@ -271,10 +277,7 @@ const CameraView: React.FC<CameraViewProps> = ({
                 video.srcObject = stream;
                 video.play();
                 video.onloadedmetadata = () => {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
                     setIsLoading(false);
-
                     const drawToCanvas = () => {
                         if (video.readyState >= 2) {
                             applyFiltersAndDraw(video);
@@ -290,8 +293,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         const image = new Image();
         image.crossOrigin = "anonymous";
         image.onload = () => {
-            canvas.width = image.width;
-            canvas.height = image.height;
             applyFiltersAndDraw(image);
             setIsLoading(false);
         };
@@ -305,6 +306,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   }, [camera.streamUrl, camera.deviceId, camera.type, adjustments]);
 
   const handleWheel = (e: React.WheelEvent) => {
+    if (isThumbnail) return;
     e.preventDefault();
     const view = viewRef.current;
     if (!view) return;
@@ -333,6 +335,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isThumbnail) return;
     if (transform.scale > 1) {
         e.preventDefault();
         setIsPanning(true);
@@ -344,6 +347,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isThumbnail) return;
     if (isPanning) {
         e.preventDefault();
         const newX = e.clientX - startPanPoint.current.x;
@@ -353,6 +357,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const handleMouseUpOrLeave = () => {
+    if (isThumbnail) return;
     setIsPanning(false);
   };
 
@@ -367,13 +372,14 @@ const CameraView: React.FC<CameraViewProps> = ({
 
   return (
     <div
-      className={`relative bg-gray-800 rounded-lg shadow-lg overflow-hidden group transition-all duration-300 ${
-        isGlowing ? 'ring-4 ring-cyan-500 shadow-cyan-500/50' : 'ring-2 ring-transparent'
-      }`}
+      onClick={onClick}
+      className={`relative bg-gray-800 rounded-lg shadow-lg overflow-hidden group transition-all duration-300 w-full h-full flex flex-col ${
+        isGlowing && !isThumbnail ? 'ring-4 ring-cyan-500 shadow-cyan-500/50' : 'ring-2 ring-transparent'
+      } ${isThumbnail ? 'cursor-pointer' : ''}`}
     >
       <div 
         ref={viewRef}
-        className="relative aspect-video bg-black overflow-hidden cursor-default"
+        className="relative bg-black overflow-hidden flex-grow"
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -383,11 +389,13 @@ const CameraView: React.FC<CameraViewProps> = ({
       >
         <canvas 
             ref={canvasRef} 
-            className="w-full h-full object-cover" 
+            className="absolute top-0 left-0 object-contain" 
             style={{
+                width: '100%',
+                height: '100%',
                 transformOrigin: '0 0',
                 transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-                cursor: transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default',
+                cursor: !isThumbnail && transform.scale > 1 ? (isPanning ? 'grabbing' : 'grab') : (isThumbnail ? 'pointer' : 'default'),
             }}
         />
         <video ref={videoRef} className="hidden" playsInline />
@@ -396,7 +404,7 @@ const CameraView: React.FC<CameraViewProps> = ({
                 <p className="text-gray-400">Carregando...</p>
             </div>
         )}
-        {transform.scale > 1 && (
+        {!isThumbnail && transform.scale > 1 && (
             <button
                 onClick={resetTransform}
                 className="absolute bottom-2 right-2 p-2 bg-gray-900/60 rounded-full text-white hover:bg-gray-700/80 transition-colors z-10"
@@ -407,88 +415,64 @@ const CameraView: React.FC<CameraViewProps> = ({
         )}
       </div>
 
-      <div className="p-4">
-        <h3 className="font-bold text-lg text-white truncate">{camera.name}</h3>
-        <p className={`text-sm ${camera.motionDetectionEnabled ? 'text-green-400' : 'text-gray-400'}`}>
-          {camera.motionDetectionEnabled ? 'Detecção de movimento ativa' : 'Detecção de movimento inativa'}
-        </p>
+      <div className={isThumbnail ? 'p-2 flex-shrink-0' : 'p-4 flex-shrink-0'}>
+        <h3 className={`font-bold text-white truncate ${isThumbnail ? 'text-xs' : 'text-lg'}`}>{camera.name}</h3>
+        {!isThumbnail && (
+            <p className={`text-sm ${camera.motionDetectionEnabled ? 'text-green-400' : 'text-gray-400'}`}>
+                {camera.motionDetectionEnabled ? 'Detecção de movimento ativa' : 'Detecção de movimento inativa'}
+            </p>
+        )}
       </div>
 
-      <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-        <button
-          onClick={() => onEdit(camera)}
-          className="p-2 bg-gray-700/80 hover:bg-cyan-600 rounded-full text-white transition-colors"
-          title="Editar Câmera"
-        >
-          <EditIcon className="w-5 h-5" />
-        </button>
-        <button
-          onClick={() => onDelete(camera.id)}
-          className="p-2 bg-gray-700/80 hover:bg-red-600 rounded-full text-white transition-colors"
-          title="Excluir Câmera"
-        >
-          <TrashIcon className="w-5 h-5" />
-        </button>
-      </div>
-      
-      {showAdjustments && (
-        <div className="absolute bottom-16 right-4 bg-gray-900/80 backdrop-blur-sm rounded-lg p-3 z-20 w-52 space-y-2 shadow-lg">
-            <div className="text-xs text-gray-300">
-                <label htmlFor={`brilho-${camera.id}`} className="flex justify-between">Brilho <span>{adjustments.brightness}%</span></label>
-                <input id={`brilho-${camera.id}`} type="range" name="brightness" min="0" max="200" value={adjustments.brightness} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+      {!isThumbnail && (
+          <>
+            <div className="absolute top-2 right-2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                <button onClick={() => onEdit(camera)} className="p-2 bg-gray-700/80 hover:bg-cyan-600 rounded-full text-white transition-colors" title="Editar Câmera">
+                    <EditIcon className="w-5 h-5" />
+                </button>
+                <button onClick={() => onDelete(camera.id)} className="p-2 bg-gray-700/80 hover:bg-red-600 rounded-full text-white transition-colors" title="Excluir Câmera">
+                    <TrashIcon className="w-5 h-5" />
+                </button>
             </div>
-            <div className="text-xs text-gray-300">
-                <label htmlFor={`contraste-${camera.id}`} className="flex justify-between">Contraste <span>{adjustments.contrast}%</span></label>
-                <input id={`contraste-${camera.id}`} type="range" name="contrast" min="0" max="200" value={adjustments.contrast} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+            
+            {showAdjustments && (
+                <div className="absolute bottom-16 right-4 bg-gray-900/80 backdrop-blur-sm rounded-lg p-3 z-20 w-52 space-y-2 shadow-lg">
+                    <div className="text-xs text-gray-300">
+                        <label htmlFor={`brilho-${camera.id}`} className="flex justify-between">Brilho <span>{adjustments.brightness}%</span></label>
+                        <input id={`brilho-${camera.id}`} type="range" name="brightness" min="0" max="200" value={adjustments.brightness} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+                    </div>
+                    <div className="text-xs text-gray-300">
+                        <label htmlFor={`contraste-${camera.id}`} className="flex justify-between">Contraste <span>{adjustments.contrast}%</span></label>
+                        <input id={`contraste-${camera.id}`} type="range" name="contrast" min="0" max="200" value={adjustments.contrast} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+                    </div>
+                    <div className="text-xs text-gray-300">
+                        <label htmlFor={`saturacao-${camera.id}`} className="flex justify-between">Saturação <span>{adjustments.saturation}%</span></label>
+                        <input id={`saturacao-${camera.id}`} type="range" name="saturation" min="0" max="200" value={adjustments.saturation} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
+                    </div>
+                </div>
+            )}
+
+            <ScenarioIndicator scenario={camera.detectionScenario} />
+
+            <div className="absolute bottom-4 right-4 flex gap-2 z-10">
+                <button onClick={() => setShowAdjustments(prev => !prev)} className={`p-2 rounded-full text-white transition-colors ${showAdjustments ? 'bg-cyan-600' : 'bg-gray-700/80 hover:bg-gray-600'}`} title="Ajustes de Imagem">
+                    <AdjustmentsIcon className="w-5 h-5" />
+                </button>
+                <button onClick={handleAnalyzeFrame} className="p-2 bg-gray-700/80 hover:bg-purple-600 rounded-full text-white transition-colors" title="Analisar com IA">
+                    <SparklesIcon className="w-5 h-5" />
+                </button>
+                <button onClick={handleSnapshotAndParams} className="p-2 bg-gray-700/80 hover:bg-blue-600 rounded-full text-white transition-colors" title="Salvar Snapshot e Parâmetros">
+                    <CameraIcon className="w-5 h-5" />
+                </button>
+                <button onClick={handleToggleRecording} className={`p-2 rounded-full text-white transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-gray-700/80 hover:bg-gray-600'} ${isRecording && isAutoRecording.current ? 'opacity-50 cursor-not-allowed' : ''}`} title={isRecording ? (isAutoRecording.current ? 'Gravação automática em andamento' : 'Parar Gravação') : 'Iniciar Gravação Manual'} disabled={isRecording && isAutoRecording.current}>
+                    {isRecording ? <StopIcon className="w-5 h-5"/> : <RecordIcon className="w-5 h-5" />}
+                </button>
+                <button onClick={handleTriggerMotionClick} disabled={!camera.motionDetectionEnabled || isAnalyzing} className="p-2 w-[36px] h-[36px] flex items-center justify-center bg-gray-700/80 hover:bg-yellow-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title={isAnalyzing ? "Analisando movimento..." : "Simular Detecção de Movimento"}>
+                    {isAnalyzing ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <MotionIcon className="w-5 h-5" />}
+                </button>
             </div>
-            <div className="text-xs text-gray-300">
-                <label htmlFor={`saturacao-${camera.id}`} className="flex justify-between">Saturação <span>{adjustments.saturation}%</span></label>
-                <input id={`saturacao-${camera.id}`} type="range" name="saturation" min="0" max="200" value={adjustments.saturation} onChange={handleAdjustmentChange} className="w-full h-1.5 bg-gray-600 rounded-lg appearance-none cursor-pointer"/>
-            </div>
-        </div>
+          </>
       )}
-
-      <ScenarioIndicator scenario={camera.detectionScenario} />
-
-      <div className="absolute bottom-4 right-4 flex gap-2 z-10">
-        <button
-            onClick={() => setShowAdjustments(prev => !prev)}
-            className={`p-2 rounded-full text-white transition-colors ${showAdjustments ? 'bg-cyan-600' : 'bg-gray-700/80 hover:bg-gray-600'}`}
-            title="Ajustes de Imagem"
-        >
-            <AdjustmentsIcon className="w-5 h-5" />
-        </button>
-        <button
-            onClick={handleAnalyzeFrame}
-            className="p-2 bg-gray-700/80 hover:bg-purple-600 rounded-full text-white transition-colors"
-            title="Analisar com IA"
-        >
-            <SparklesIcon className="w-5 h-5" />
-        </button>
-        <button
-            onClick={handleSnapshotAndParams}
-            className="p-2 bg-gray-700/80 hover:bg-blue-600 rounded-full text-white transition-colors"
-            title="Salvar Snapshot e Parâmetros"
-        >
-            <CameraIcon className="w-5 h-5" />
-        </button>
-        <button
-            onClick={handleToggleRecording}
-            className={`p-2 rounded-full text-white transition-colors ${isRecording ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-gray-700/80 hover:bg-gray-600'} ${isRecording && isAutoRecording.current ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title={isRecording ? (isAutoRecording.current ? 'Gravação automática em andamento' : 'Parar Gravação') : 'Iniciar Gravação Manual'}
-            disabled={isRecording && isAutoRecording.current}
-          >
-            {isRecording ? <StopIcon className="w-5 h-5"/> : <RecordIcon className="w-5 h-5" />}
-        </button>
-        <button
-          onClick={handleTriggerMotionClick}
-          disabled={!camera.motionDetectionEnabled || isAnalyzing}
-          className="p-2 w-[36px] h-[36px] flex items-center justify-center bg-gray-700/80 hover:bg-yellow-500 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title={isAnalyzing ? "Analisando movimento..." : "Simular Detecção de Movimento"}
-        >
-          {isAnalyzing ? <SpinnerIcon className="w-5 h-5 animate-spin" /> : <MotionIcon className="w-5 h-5" />}
-        </button>
-      </div>
 
       {isAnalysisOpen && imageForAnalysis && (
         <GeminiAnalysis

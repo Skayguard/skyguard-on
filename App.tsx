@@ -103,18 +103,22 @@ const App: React.FC = () => {
   const [lastEventCameraId, setLastEventCameraId] = useState<string | null>(null);
   const [activeAutoRecordings, setActiveAutoRecordings] = useState<Set<string>>(new Set());
   const [analyzingCameraId, setAnalyzingCameraId] = useState<string | null>(null);
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
 
   useEffect(() => {
     // Carregar câmeras do localStorage
     try {
       const savedCameras = localStorage.getItem('cameras');
       if (savedCameras) {
-        setCameras(JSON.parse(savedCameras));
+        const parsedCameras = JSON.parse(savedCameras);
+        setCameras(parsedCameras);
       } else {
-        setCameras([
+        // Fix: Explicitly type `defaultCameras` to match the `Camera[]` state type.
+        const defaultCameras: Camera[] = [
             { id: '1', name: 'Observatório do Céu', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Céu', motionDetectionEnabled: true, motionDetectionSensitivity: 70, motionDetectionZones: [], detectionScenario: 'ufo' },
             { id: '2', name: 'Jardim dos Fundos', type: 'ip', streamUrl: 'https://via.placeholder.com/600x400/000000/FFFFFF?text=Jardim', motionDetectionEnabled: true, motionDetectionSensitivity: 50, motionDetectionZones: [], detectionScenario: 'birds' },
-        ]);
+        ];
+        setCameras(defaultCameras);
       }
     } catch (error) {
         console.error("Falha ao analisar câmeras do localStorage", error);
@@ -152,7 +156,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     localStorage.setItem('cameras', JSON.stringify(cameras));
-  }, [cameras]);
+    // Garante que uma câmera esteja sempre selecionada se a lista não estiver vazia.
+    if (cameras.length > 0 && !cameras.some(c => c.id === selectedCameraId)) {
+        setSelectedCameraId(cameras[0].id);
+    } else if (cameras.length === 0) {
+        setSelectedCameraId(null);
+    }
+  }, [cameras, selectedCameraId]);
 
   useEffect(() => {
     localStorage.setItem('motionEvents', JSON.stringify(motionEvents));
@@ -360,6 +370,8 @@ const App: React.FC = () => {
                   onRecordingComplete={handleRecordingComplete}
                   activeAutoRecordings={activeAutoRecordings}
                   analyzingCameraId={analyzingCameraId}
+                  selectedCameraId={selectedCameraId}
+                  onSelectCamera={setSelectedCameraId}
               />
           ) : (
               <div className="text-center py-20">
